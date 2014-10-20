@@ -79,6 +79,13 @@ void Sound::load(const void *data, unsigned int size)
  */
 void Sound::play(int channel) const
 {
+	static int nextChannel = 0;
+
+	if (channel < 0) {
+		channel = nextChannel;
+		nextChannel = (nextChannel + 1) % 3;
+	}
+
 	if (!Options::getBool("mute") && _sound != 0 && Mix_PlayChannel(channel, _sound, 0) == -1)
 	{
 		Log(LOG_WARNING) << Mix_GetError();

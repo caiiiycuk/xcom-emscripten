@@ -25,6 +25,8 @@
 #include "Engine/Options.h"
 #include "Menu/StartState.h"
 
+#define _DEBUG = 1
+
 /** @mainpage
  * @author OpenXcom Developers
  *
@@ -69,12 +71,16 @@ int main(int argc, char** args)
 		exit(EXIT_FAILURE);
 	}
 #endif
+
+#ifndef EMSCRIPTEN
 	Options::save();
 
 	// Comment this for faster exit.
 	delete game;
 	// Uncomment to check memory leaks in VS
 	//_CrtDumpMemoryLeaks();
+#endif
+
 	return EXIT_SUCCESS;
 }
 

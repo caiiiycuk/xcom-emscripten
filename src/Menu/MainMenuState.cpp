@@ -32,6 +32,7 @@
 #include "OptionsState.h"
 #include "../Interface/Cursor.h"
 #include "../Interface/FpsCounter.h"
+#include <epicport/api.h>
 
 namespace OpenXcom
 {
@@ -146,7 +147,9 @@ void MainMenuState::btnNewBattleClick(Action *)
  */
 void MainMenuState::btnLoadClick(Action *)
 {
-	_game->pushState(new LoadState(_game, OPT_MENU));
+	if (Epicport_CanLoad()) {
+		_game->pushState(new LoadState(_game, OPT_MENU));
+	}
 }
 
 /**

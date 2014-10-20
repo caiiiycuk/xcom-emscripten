@@ -43,7 +43,7 @@ class FpsCounter;
  */
 class Game
 {
-private:
+public:
 	SDL_Event _event;
 	Screen *_screen;
 	Cursor *_cursor;

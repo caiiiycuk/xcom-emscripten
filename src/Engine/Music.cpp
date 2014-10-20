@@ -21,6 +21,7 @@
 #include "Options.h"
 #include "Logger.h"
 #include "Language.h"
+#include <epicport/api.h>
 
 namespace OpenXcom
 {
@@ -38,7 +39,9 @@ Music::Music() : _music(0)
 Music::~Music()
 {
 #ifndef __NO_MUSIC
+#ifndef EMSCRIPTEN
 	Mix_FreeMusic(_music);
+#endif
 #endif
 }
 
@@ -49,15 +52,20 @@ Music::~Music()
 void Music::load(const std::string &filename)
 {
 #ifndef __NO_MUSIC
+#ifdef EMSCRIPTEN
+	_filename = filename;
+#else
 	// SDL only takes UTF-8 filenames
 	// so here's an ugly hack to match this ugly reasoning
-	std::string utf8 = Language::wstrToUtf8(Language::fsToWstr(filename));
+	std::wstring wstr = Language::cpToWstr(filename);
+	std::string utf8 = Language::wstrToUtf8(wstr);
 
 	_music = Mix_LoadMUS(utf8.c_str());
 	if (_music == 0)
 	{
 		throw Exception(Mix_GetError());
 	}
+#endif
 #endif
 }
 
@@ -69,6 +77,9 @@ void Music::load(const std::string &filename)
 void Music::load(const void *data, size_t size)
 {
 #ifndef __NO_MUSIC
+#ifdef EMSCRIPTEN
+	_filename = "";
+#else
 	SDL_RWops *rwops = SDL_RWFromConstMem(data, size);
 	_music = Mix_LoadMUS_RW(rwops);
 	SDL_FreeRW(rwops);
@@ -76,6 +87,7 @@ void Music::load(const void *data, size_t size)
 	{
 		throw Exception(Mix_GetError());
 	}
+#endif
 #endif
 }
 
@@ -88,10 +100,17 @@ void Music::play(int loop) const
 	if (!Options::getBool("mute"))
 	{
 		Mix_HaltMusic();
+#ifdef EMSCRIPTEN
+		Epicport_HaltMusic();
+		if (_filename != "") {
+			Epicport_PlayMusic(_filename.c_str(), loop);
+		}
+#else
 		if (_music != 0 && Mix_PlayMusic(_music, loop) == -1)
 		{
 			Log(LOG_WARNING) << Mix_GetError();
 		}
+#endif
 	}
 #endif
 }

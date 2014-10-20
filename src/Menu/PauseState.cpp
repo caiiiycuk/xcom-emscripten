@@ -29,6 +29,7 @@
 #include "SaveState.h"
 #include "../Engine/Options.h"
 #include "OptionsState.h"
+#include <epicport/api.h>
 
 namespace OpenXcom
 {
@@ -159,7 +160,9 @@ void PauseState::btnLoadClick(Action *)
  */
 void PauseState::btnSaveClick(Action *)
 {
-	_game->pushState(new SaveState(_game, _origin));
+	if (Epicport_CanSave()) {
+		_game->pushState(new SaveState(_game, _origin));
+	}
 }
 
 /**

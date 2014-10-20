@@ -27,7 +27,7 @@ namespace OpenXcom
 
 class Surface;
 
-enum LoadingPhase { LOADING_NONE, LOADING_STARTED, LOADING_FAILED, LOADING_SUCCESSFUL };
+enum LoadingPhase { LOADING_NONE, LOADING_STARTED, LOADING_FAILED, LOADING_SUCCESSFUL, PLAYING_INTRO, INTRO_DONE };
 
 /**
  * Initializes the game and loads all required content.

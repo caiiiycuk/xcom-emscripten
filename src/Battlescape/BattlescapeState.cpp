@@ -20,7 +20,6 @@
 #include <cmath>
 #include <sstream>
 #include <iomanip>
-#include <SDL_gfxPrimitives.h>
 #include "Map.h"
 #include "Camera.h"
 #include "BattlescapeState.h"
@@ -1472,6 +1471,7 @@ inline void BattlescapeState::handle(Action *action)
  */
 void BattlescapeState::saveAIMap()
 {
+#ifdef SAVE_AI_MAP
 	Uint32 start = SDL_GetTicks();
 	BattleUnit *unit = _save->getSelectedUnit();
 	if (!unit) return;
@@ -1593,6 +1593,7 @@ void BattlescapeState::saveAIMap()
 	SDL_FreeSurface(img);
 
 	Log(LOG_INFO) << "saveAIMap() completed in " << SDL_GetTicks() - start << "ms.";
+#endif
 }
 
 /**

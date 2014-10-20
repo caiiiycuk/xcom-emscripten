@@ -33,6 +33,7 @@
 #include "../Engine/Sound.h"
 #include "../Ruleset/Ruleset.h"
 #include "MainMenuState.h"
+#include <epicport/api.h>
 
 namespace OpenXcom
 {
@@ -424,6 +425,9 @@ static void audioHandler()
  * Waits a cycle to load the resources so the screen is blitted first.
  * If the loading fails, it shows an error, otherwise moves on to the game.
  */
+
+extern bool screenUpdatesEnabled;
+
 void StartState::think()
 {
 	State::think();
@@ -487,49 +491,15 @@ void StartState::think()
 			std::string introSoundFileWin = CrossPlatform::getDataFile("SOUND/SAMPLE3.CAT");
 			if (Options::getBool("playIntro") && CrossPlatform::fileExists(introFile) && (CrossPlatform::fileExists(introSoundFileDOS) || CrossPlatform::fileExists(introSoundFileWin)))
 			{
+				_load = PLAYING_INTRO;
+				screenUpdatesEnabled = false;
 				audioSequence = new AudioSequence(_game->getResourcePack());
 				Flc::flc.realscreen = _game->getScreen();
+				Flc::flc.frameCallBack = &audioHandler;
 				Flc::FlcInit(introFile.c_str());
 				Flc::flc.dx = (Options::getInt("baseXResolution") - 320) / 2;
 				Flc::flc.dy = (Options::getInt("baseYResolution") - 200) / 2;
 				Flc::flc.loop = 0; // just the one time, please
-				Flc::FlcMain(&audioHandler);
-				Flc::FlcDeInit();
-				delete audioSequence;
-
-
-#ifndef __NO_MUSIC
-				// fade out!
-				Mix_FadeOutChannel(-1, 45*20);
-				if (Mix_GetMusicType(0) != MUS_MID) { Mix_FadeOutMusic(45*20); } // SDL_Mixer has trouble with native midi and volume on windows, which is the most likely use case, so f@%# it.
-				else { Mix_HaltMusic(); }
-#endif
-
-				SDL_Color pal[256];
-				SDL_Color pal2[256];
-				memcpy(pal, _game->getScreen()->getPalette(), sizeof(SDL_Color) * 256);
-				for (int i = 20; i > 0; --i)
-				{
-					SDL_Event event;
-					if (SDL_PollEvent(&event) && event.type == SDL_KEYDOWN) break;
-					for (int color = 0; color < 256; ++color)
-					{
-						pal2[color].r = (((int)pal[color].r) * i) / 20;
-						pal2[color].g = (((int)pal[color].g) * i) / 20;
-						pal2[color].b = (((int)pal[color].b) * i) / 20;
-					}
-					_game->getScreen()->setPalette(pal2, 0, 256, true);
-					_game->getScreen()->flip();
-					SDL_Delay(45);
-				}
-				_game->getScreen()->clear();
-				_game->getScreen()->flip();
-
-				_game->setVolume(Options::getInt("soundVolume"), Options::getInt("musicVolume"));
-
-#ifndef __NO_MUSIC
-				Mix_HaltChannel(-1);
-#endif
 			}
 		}
 		catch (Exception &e)
@@ -553,6 +523,53 @@ void StartState::think()
 		Log(LOG_INFO) << "OpenXcom started successfully!";
 		_game->setState(new MainMenuState(_game));
 		break;
+
+	case PLAYING_INTRO: {
+		if (!Flc::FlcStep()) {
+		  _load = INTRO_DONE;
+		}
+	} break;
+
+	case INTRO_DONE: {
+		screenUpdatesEnabled = true;
+		Flc::FlcDeInit();
+		delete audioSequence;
+
+
+#ifndef __NO_MUSIC
+		// fade out!
+		Mix_HaltMusic();
+		Epicport_HaltMusic();
+#endif
+
+		SDL_Color pal[256];
+		SDL_Color pal2[256];
+		memcpy(pal, _game->getScreen()->getPalette(), sizeof(SDL_Color) * 256);
+		for (int i = 20; i > 0; --i)
+		{
+			SDL_Event event;
+			if (SDL_PollEvent(&event) && event.type == SDL_KEYDOWN) break;
+			for (int color = 0; color < 256; ++color)
+			{
+				pal2[color].r = (((int)pal[color].r) * i) / 20;
+				pal2[color].g = (((int)pal[color].g) * i) / 20;
+				pal2[color].b = (((int)pal[color].b) * i) / 20;
+			}
+			_game->getScreen()->setPalette(pal2, 0, 256, true);
+			_game->getScreen()->flip();
+//					SDL_Delay(45);
+		}
+		_game->getScreen()->clear();
+		_game->getScreen()->flip();
+
+		_game->setVolume(Options::getInt("soundVolume"), Options::getInt("musicVolume"));
+
+#ifndef __NO_MUSIC
+		Mix_HaltChannel(-1);
+#endif
+		_load = LOADING_SUCCESSFUL;
+	} break;
+
 	default:
 		break;
 	}
@@ -573,4 +590,3 @@ void StartState::handle(Action *action)
 }
 
 }
-

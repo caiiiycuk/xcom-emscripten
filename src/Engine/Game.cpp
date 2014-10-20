@@ -42,8 +42,21 @@
 #include "../Menu/SaveState.h"
 #include "../Menu/TestState.h"
 
+#if EMSCRIPTEN
+#include <emscripten.h>
+#endif
+
+#include <epicport/api.h>
+
 namespace OpenXcom
 {
+
+enum ApplicationState { RUNNING = 0, SLOWED = 1, PAUSED = 2 } runningState = RUNNING;
+
+static Game *_instance = 0;
+static const ApplicationState kbFocusRun[4] = { RUNNING, RUNNING, SLOWED, PAUSED };
+static const ApplicationState stateRun[4] = { SLOWED, PAUSED, PAUSED, PAUSED };
+static int pauseMode = 0;
 
 /**
  * Starts up SDL with all the subsystems and SDL_mixer for audio processing,
@@ -52,6 +65,8 @@ namespace OpenXcom
  */
 Game::Game(const std::string &title) : _screen(0), _cursor(0), _lang(0), _states(), _deleted(), _res(0), _save(0), _rules(0), _quit(false), _init(false), _mouseActive(true)
 {
+	_instance = this;
+
 	// Initialize SDL
 	if (SDL_Init(SDL_INIT_VIDEO) < 0)
 	{
@@ -59,34 +74,35 @@ Game::Game(const std::string &title) : _screen(0), _cursor(0), _lang(0), _states
 	}
 	Log(LOG_INFO) << "SDL initialized successfully.";
 
-	Options::setBool("mute", false);
-	// Initialize SDL_mixer
-	if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
+	if (!Options::getBool("mute"))
 	{
-		Log(LOG_ERROR) << SDL_GetError();
-		Log(LOG_WARNING) << "No sound device detected, audio disabled.";
-		Options::setBool("mute", true);
-	}
-	else
-	{
-		Uint16 format;
-		if (Options::getInt("audioBitDepth") == 8)
-			format = AUDIO_S8;
-		else
-			format = AUDIO_S16SYS;
-		if (Mix_OpenAudio(Options::getInt("audioSampleRate"), format, 2, 1024) != 0)
+		// Initialize SDL_mixer
+		if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
 		{
-			Log(LOG_ERROR) << Mix_GetError();
+			Log(LOG_ERROR) << SDL_GetError();
 			Log(LOG_WARNING) << "No sound device detected, audio disabled.";
 			Options::setBool("mute", true);
 		}
 		else
 		{
-			Mix_AllocateChannels(16);
-			Log(LOG_INFO) << "SDL_mixer initialized successfully.";
+			Uint16 format;
+			if (Options::getInt("audioBitDepth") == 8)
+				format = AUDIO_S8;
+			else
+				format = AUDIO_S16SYS;
+			if (Mix_OpenAudio(Options::getInt("audioSampleRate"), format, 2, 1024) != 0)
+			{
+				Log(LOG_ERROR) << Mix_GetError();
+				Log(LOG_WARNING) << "No sound device detected, audio disabled.";
+				Options::setBool("mute", true);
+			}
+			else
+			{
+				Mix_AllocateChannels(16);
+			}
 		}
+		Log(LOG_INFO) << "SDL_mixer initialized successfully.";
 	}
-
 	// trap the mouse inside the window
 	if (Options::getBool("captureMouse"))
 	{
@@ -137,6 +153,12 @@ Game::Game(const std::string &title) : _screen(0), _cursor(0), _lang(0), _states
  */
 Game::~Game()
 {
+	if (_save != 0 && _save->getMonthsPassed() >= 0 && Options::getInt("autosave") == 3)
+	{
+		SaveState *ss = new SaveState(this, OPT_MENU, false);
+		delete ss;
+	}
+
 	Mix_HaltChannel(-1);
 
 	for (std::list<State*>::iterator i = _states.begin(); i != _states.end(); ++i)
@@ -157,6 +179,137 @@ Game::~Game()
 	SDL_Quit();
 }
 
+bool screenUpdatesEnabled = true;
+
+void p_GameLoop() {
+	// Clean up states
+	while (!_instance->_deleted.empty())
+	{
+		delete _instance->_deleted.back();
+		_instance->_deleted.pop_back();
+	}
+
+	// Initialize active state
+	if (!_instance->_init)
+	{
+		_instance->_init = true;
+		_instance->_states.back()->init();
+
+		// Unpress buttons
+		_instance->_states.back()->resetAll();
+
+		// Refresh mouse position
+		SDL_Event ev;
+		int x, y;
+		SDL_GetMouseState(&x, &y);
+		ev.type = SDL_MOUSEMOTION;
+		ev.motion.x = x;
+		ev.motion.y = y;
+		Action action = Action(&ev, _instance->_screen->getXScale(), _instance->_screen->getYScale(), _instance->_screen->getCursorTopBlackBand(), _instance->_screen->getCursorLeftBlackBand());
+		_instance->_states.back()->handle(&action);
+	}
+
+	// Process events
+	while (screenUpdatesEnabled && SDL_PollEvent(&_instance->_event))
+	{
+		switch (_instance->_event.type)
+		{
+			case SDL_QUIT: _instance->_quit = true; break;
+			case SDL_ACTIVEEVENT:
+				switch (reinterpret_cast<SDL_ActiveEvent*>(&_instance->_event)->state)
+				{
+					case SDL_APPACTIVE:
+						runningState = reinterpret_cast<SDL_ActiveEvent*>(&_instance->_event)->gain ? RUNNING : stateRun[pauseMode];
+						break;
+					case SDL_APPMOUSEFOCUS:
+						// We consciously ignore it.
+						break;
+					case SDL_APPINPUTFOCUS:
+						runningState = reinterpret_cast<SDL_ActiveEvent*>(&_instance->_event)->gain ? RUNNING : kbFocusRun[pauseMode];
+						break;
+				}
+				break;
+			case SDL_VIDEORESIZE:
+				Options::setInt("displayWidth", _instance->_event.resize.w);
+				Options::setInt("displayHeight", _instance->_event.resize.h);
+				_instance->_screen->setResolution(_instance->_event.resize.w, _instance->_event.resize.h);
+				break;
+			case SDL_MOUSEMOTION:
+			case SDL_MOUSEBUTTONDOWN:
+			case SDL_MOUSEBUTTONUP:
+				// Skip mouse events if they're disabled
+				if (!_instance->_mouseActive) continue;
+				// re-gain focus on mouse-over or keypress.
+				runningState = RUNNING;
+				// Go on, feed the event to others
+			default:
+				Action action = Action(&_instance->_event, _instance->_screen->getXScale(), _instance->_screen->getYScale(), _instance->_screen->getCursorTopBlackBand(), _instance->_screen->getCursorLeftBlackBand());
+				_instance->_screen->handle(&action);
+				_instance->_cursor->handle(&action);
+				_instance->_fpsCounter->handle(&action);
+				_instance->_states.back()->handle(&action);
+				if (Options::getBool("debug"))
+				{
+					if (action.getDetails()->type == SDL_KEYDOWN && action.getDetails()->key.keysym.sym == SDLK_t && (SDL_GetModState() & KMOD_CTRL) != 0)
+					{
+						_instance->setState(new TestState(_instance));
+					}
+				}
+				break;
+		}
+	}
+
+	// Process rendering
+	if (runningState != PAUSED)
+	{
+		// Process logic
+		_instance->_fpsCounter->think();
+		_instance->_states.back()->think();
+
+		if (_instance->_init)
+		{
+			if (screenUpdatesEnabled) {
+				_instance->_screen->clear();
+			}
+
+			std::list<State*>::iterator i = _instance->_states.end();
+			do
+			{
+				--i;
+			}
+			while(i != _instance->_states.begin() && !(*i)->isScreen());
+
+			for (; i != _instance->_states.end(); ++i)
+			{
+				(*i)->blit();
+			}
+			_instance->_fpsCounter->blit(_instance->_screen->getSurface());
+			_instance->_cursor->blit(_instance->_screen->getSurface());
+		}
+		_instance->_screen->flip();
+	}
+
+	// Save on CPU
+#ifndef EMSCRIPTEN
+	switch (runningState)
+	{
+		case RUNNING:
+#ifdef __MORPHOS__
+			delaytime = waittime - (SDL_GetTicks() - framestarttime);
+			if(delaytime > 0)
+				SDL_Delay((Uint32)delaytime);
+			framestarttime = SDL_GetTicks();
+#else
+			SDL_Delay(1);
+#endif
+
+			break; //Save CPU from going 100%
+		case SLOWED: case PAUSED:
+			SDL_Delay(100); break; //More slowing down.
+	}
+#endif //EMSCRIPTEN
+}
+
 /**
  * The state machine takes care of passing all the events from SDL to the
  * active state, running any code within and blitting all the states and
@@ -164,150 +317,20 @@ Game::~Game()
  */
 void Game::run()
 {
-	enum ApplicationState { RUNNING = 0, SLOWED = 1, PAUSED = 2 } runningState = RUNNING;
-	static const ApplicationState kbFocusRun[4] = { RUNNING, RUNNING, SLOWED, PAUSED };
-	static const ApplicationState stateRun[4] = { SLOWED, PAUSED, PAUSED, PAUSED };
-	int pauseMode = Options::getInt("pauseMode");
-	if (pauseMode > 3)
+	pauseMode = Options::getInt("pauseMode");
+	if (pauseMode > 3) {
 		pauseMode = 3;
-	while (!_quit)
-	{
-		// Clean up states
-		while (!_deleted.empty())
-		{
-			delete _deleted.back();
-			_deleted.pop_back();
-		}
+	}
 
-		// Initialize active state
-		if (!_init)
-		{
-			_init = true;
-			_states.back()->init();
-
-			// Unpress buttons
-			_states.back()->resetAll();
-
-			// Refresh mouse position
-			SDL_Event ev;
-			int x, y;
-			SDL_GetMouseState(&x, &y);
-			ev.type = SDL_MOUSEMOTION;
-			ev.motion.x = x;
-			ev.motion.y = y;
-			Action action = Action(&ev, _screen->getXScale(), _screen->getYScale(), _screen->getCursorTopBlackBand(), _screen->getCursorLeftBlackBand());
-			_states.back()->handle(&action);
-		}
-
-		// Process events
-		while (SDL_PollEvent(&_event))
-		{
-			if (CrossPlatform::isQuitShortcut(_event))
-				_event.type = SDL_QUIT;
-			switch (_event.type)
-			{
-				case SDL_QUIT:
-					_quit = true;
-					break;
-				case SDL_ACTIVEEVENT:
-					switch (reinterpret_cast<SDL_ActiveEvent*>(&_event)->state)
-					{
-						case SDL_APPACTIVE:
-							runningState = reinterpret_cast<SDL_ActiveEvent*>(&_event)->gain ? RUNNING : stateRun[pauseMode];
-							break;
-						case SDL_APPMOUSEFOCUS:
-							// We consciously ignore it.
-							break;
-						case SDL_APPINPUTFOCUS:
-							runningState = reinterpret_cast<SDL_ActiveEvent*>(&_event)->gain ? RUNNING : kbFocusRun[pauseMode];
-							break;
-					}
-					break;
-				case SDL_VIDEORESIZE:
-					if (Options::getBool("allowResize"))
-					{
-						Options::setInt("displayWidth", _event.resize.w);
-						Options::setInt("displayHeight", _event.resize.h);
-						_screen->setResolution(_event.resize.w, _event.resize.h);
-					}
-					break;
-				case SDL_MOUSEMOTION:
-				case SDL_MOUSEBUTTONDOWN:
-				case SDL_MOUSEBUTTONUP:
-					// Skip mouse events if they're disabled
-					if (!_mouseActive) continue;
-					// re-gain focus on mouse-over or keypress.
-					runningState = RUNNING;
-					// Go on, feed the event to others
-				default:
-					Action action = Action(&_event, _screen->getXScale(), _screen->getYScale(), _screen->getCursorTopBlackBand(), _screen->getCursorLeftBlackBand());
-					_screen->handle(&action);
-					_cursor->handle(&action);
-					_fpsCounter->handle(&action);
-					_states.back()->handle(&action);
-					if (Options::getBool("debug"))
-					{
-						if (action.getDetails()->type == SDL_KEYDOWN && action.getDetails()->key.keysym.sym == SDLK_t && (SDL_GetModState() & KMOD_CTRL) != 0)
-						{
-							setState(new TestState(this));
-						}
-					}
-					break;
-			}
-		}
-
-		// Process rendering
-		if (runningState != PAUSED)
-		{
-			// Process logic
-			_fpsCounter->think();
-			_states.back()->think();
-
-			if (_init)
-			{
-				_screen->clear();
-				std::list<State*>::iterator i = _states.end();
-				do
-				{
-					--i;
-				}
-				while(i != _states.begin() && !(*i)->isScreen());
-
-				for (; i != _states.end(); ++i)
-				{
-					(*i)->blit();
-				}
-				_fpsCounter->blit(_screen->getSurface());
-				_cursor->blit(_screen->getSurface());
-			}
-			_screen->flip();
-		}
-
-		// Save on CPU
-		switch (runningState)
-		{
-			case RUNNING: 
-#ifdef __MORPHOS__
-				delaytime = waittime - (SDL_GetTicks() - framestarttime);
-				if(delaytime > 0)
-					SDL_Delay((Uint32)delaytime);
-				framestarttime = SDL_GetTicks();
+#if EMSCRIPTEN
+	EM_ASM("SDL.defaults.width = 960; SDL.defaults.height = 600;");
+	EM_ASM("SDL.defaults.copyOnLock = false; SDL.defaults.discardOnLock = true; SDL.defaults.opaqueFrontBuffer = false;");
+	emscripten_set_main_loop(p_GameLoop, 0, false);
 #else
-				SDL_Delay(1); 
+	while (!_quit) {
+		p_GameLoop();
+	}
 #endif
-				
-				break; //Save CPU from going 100%
-			case SLOWED: case PAUSED:
-				SDL_Delay(100); break; //More slowing down.
-		}
-	}
-	
-	// Auto-save
-	if (_save != 0 && _save->getMonthsPassed() >= 0 && Options::getInt("autosave") == 3)
-	{
-		SaveState *ss = new SaveState(this, OPT_MENU, false);
-		delete ss;
-	}
 }
 
 /**
@@ -328,10 +351,14 @@ void Game::setVolume(int sound, int music)
 {
 	if (!Options::getBool("mute"))
 	{
-		if (sound >= 0)
+		if (sound >= 0) {
 			Mix_Volume(-1, sound);
-		if (music >= 0)
+		}
+
+		if (music >= 0) {
 			Mix_VolumeMusic(music);
+			Epicport_VolumeMusic(music);
+		}
 	}
 }
 
@@ -438,33 +465,10 @@ Language *Game::getLanguage() const
 */
 void Game::loadLanguage(const std::string &filename)
 {
-	std::ostringstream ss;
+	std::stringstream ss;
 	ss << "Language/" << filename << ".yml";
 
-	ExtraStrings *strings = 0;
-	std::map<std::string, ExtraStrings *> extraStrings = _rules->getExtraStrings();
-	if (!extraStrings.empty())
-	{
-		if (extraStrings.find(filename) != extraStrings.end())
-		{
-			strings = extraStrings[filename];
-		}
-		// Fallback
-		else if (extraStrings.find("en-US") != extraStrings.end())
-		{
-			strings = extraStrings["en-US"];
-		}
-		else if (extraStrings.find("en-GB") != extraStrings.end())
-		{
-			strings = extraStrings["en-GB"];
-		}
-		else
-		{
-			strings = extraStrings.begin()->second;
-		}
-	}
-
-	_lang->load(CrossPlatform::getDataFile(ss.str()), strings);
+	_lang->load(CrossPlatform::getDataFile(ss.str()), _rules->getExtraStrings()[filename]);
 
 	Options::setString("language", filename);
 }
@@ -475,7 +479,7 @@ void Game::loadLanguage(const std::string &filename)
  */
 void Game::loadLng(const std::string &filename)
 {
-	std::ostringstream ss, ss2;
+	std::stringstream ss, ss2;
 	ss << "Language/" << filename << ".lng";
 	ss2 << "Language/" << filename << ".geo";
 
@@ -583,5 +587,6 @@ bool Game::isQuitting() const
 {
 	return _quit;
 }
+
 
 }

@@ -461,11 +461,20 @@ void TextEdit::keyboardPress(Action *action, State *state)
 			break;
 		default:
 			Uint16 key = action->getDetails()->key.keysym.unicode;
+
+			if (key == 1248 || key == 1250 || key == 1249) {
+				key = 0; //emscripten mod keys
+			}
+
+			if (key >= 160) {
+				key = L'?';
+			}
+
 			if (((_numerical && key >= L'0' && key <= L'9') ||
 				(!_numerical && ((key >= L' ' && key <= L'~') || key >= 160))) &&
 				!exceedsMaxWidth((wchar_t)key))
 			{
-				_value.insert(_caretPos, 1, (wchar_t)action->getDetails()->key.keysym.unicode);
+				_value.insert(_caretPos, 1, (wchar_t) key);
 				_caretPos++;
 			}
 		}

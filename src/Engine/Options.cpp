@@ -20,7 +20,9 @@
 #include "Options.h"
 #include "../version.h"
 #include <SDL.h>
+#ifndef EMSCRIPTEN
 #include <SDL_keysym.h>
+#endif
 #include <SDL_mixer.h>
 #include <stdio.h>
 #include <iostream>
@@ -60,15 +62,15 @@ void createDefault()
 	setBool("asyncBlit", false);
 	setInt("keyboardMode", KEYBOARD_OFF);
 #else
-	setInt("displayWidth", 640);
-	setInt("displayHeight", 400);
+	setInt("displayWidth", 960);
+	setInt("displayHeight", 600);
 	setBool("fullscreen", false);
-	setBool("asyncBlit", true);
+	setBool("asyncBlit", false);
 	setInt("keyboardMode", KEYBOARD_ON);
 #endif
 	setBool("anytimePsiTraining", false);
 	setBool("playIntro", true);
-	setInt("maxFrameSkip", 0);
+	setInt("maxFrameSkip", 8);
 	setBool("traceAI", false);
 	setBool("sneakyAI", false);
 	setBool("weaponSelfDestruction", false);
@@ -80,8 +82,8 @@ void createDefault()
 	setBool("useOpenGL", false);
 	setBool("checkOpenGLErrors", false);
 	setString("useOpenGLShader", "Shaders/Openxcom.OpenGL.shader");
-	setBool("vSyncForOpenGL", true);
-	setBool("useOpenGLSmoothing", true);
+	setBool("vSyncForOpenGL", false);
+	setBool("useOpenGLSmoothing", false);
 	setBool("debug", false);
 	setBool("debugUi", false);
 	setBool("mute", false);
@@ -89,8 +91,8 @@ void createDefault()
 	setInt("musicVolume", MIX_MAX_VOLUME);
 	setString("language", "");
 	setInt("battleScrollSpeed", 12); // 4, 8, 12, 16, 24
-	setInt("battleScrollType", SCROLL_AUTO);
-	setInt("battleScrollDragButton", SDL_BUTTON_MIDDLE);
+	setInt("battleScrollType", SCROLL_DRAG);
+	setInt("battleScrollDragButton", SDL_BUTTON_LEFT);
 	setBool("battleScrollDragInvert", false); // true drags away from the cursor, false drags towards (like a grab)
 	setInt("battleScrollDragTimeTolerance", 300); // miliSecond
 	setInt("battleScrollDragPixelTolerance", 10); // count of pixels
