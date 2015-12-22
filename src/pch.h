@@ -43,7 +43,9 @@
 #include <SDL_endian.h>
 #include <SDL_gfxPrimitives.h>
 #include <SDL_image.h>
+#ifndef EMSCRIPTEN
 #include <SDL_keysym.h>
+#endif
 #include <SDL_mixer.h>
 #include <SDL.h>
 #include <SDL_syswm.h>

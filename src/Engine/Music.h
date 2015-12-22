@@ -33,6 +33,7 @@ class Music
 {
 private:
 	Mix_Music *_music;
+	std::string _filename;
 public:
 	/// Creates a blank music track.
 	Music();

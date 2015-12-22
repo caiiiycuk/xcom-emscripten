@@ -20,7 +20,7 @@ grt,
                                                                   ----+
 */
 
-#define version "0.2"
+#define flc_version "0.2"
 /*
 */
 #include <stdio.h>
@@ -29,17 +29,16 @@ grt,
 #include <math.h>
 /*
 */
-#include <SDL.h>
+#include "SDL.h"
 /*
 */
 #include "Flc.h"
 #include "Logger.h"
 #include "Exception.h"
 #include "Zoom.h"
-#include "Screen.h"
-#include "Surface.h"
-#include "Options.h"
-#include "../fmath.h"
+#include "../aresame.h"
+
+#include "Surface_ep.h"
 
 namespace OpenXcom
 {
@@ -48,6 +47,8 @@ namespace Flc
 {
 
 struct Flc_t flc;
+
+Uint32 _waitForTick = 0;
 
 #if 0
 void SDLInit(char *header)
@@ -202,7 +203,7 @@ void COLORS256()
       i++;
     }
 	flc.realscreen->setPalette(flc.colors, NumColorsSkip, i);
-	SDL_SetColors(flc.mainscreen, flc.colors, NumColorsSkip, i);
+	ep_SDL_SetColors(flc.mainscreen, flc.colors, NumColorsSkip, i);
 	flc.realscreen->getSurface(); // force palette update to really happen
   }
 } /* COLORS256 */
@@ -363,7 +364,7 @@ void DECODE_COLOR()
       i++;
     }
 	flc.realscreen->setPalette(flc.colors, NumColorsSkip, i);
-    SDL_SetColors(flc.mainscreen, flc.colors, NumColorsSkip, i);
+    ep_SDL_SetColors(flc.mainscreen, flc.colors, NumColorsSkip, i);
 	flc.realscreen->getSurface(); // force palette update to really happen
   }
 } /* DECODE_COLOR  */
@@ -396,8 +397,8 @@ void FlcDoOneFrame()
 { int ChunkCount; 
   ChunkCount=flc.FrameChunks;
   flc.pChunk=flc.pMembuf;
-  if ( SDL_LockSurface(flc.mainscreen) < 0 )
-    return;
+  /*if ( ep_SDL_LockSurface(flc.mainscreen) < 0 )
+    return;*/
   // if (!ChunkCount) printf("Empty frame! %d\n", flc.FrameCount); // this is normal and used for delays
   while(ChunkCount--) {
     ReadU32(&flc.ChunkSize, flc.pChunk+0);
@@ -441,32 +442,13 @@ void FlcDoOneFrame()
     }
     flc.pChunk+=flc.ChunkSize;
   }
-  SDL_UnlockSurface(flc.mainscreen);
+  /*ep_SDL_UnlockSurface(flc.mainscreen);*/
 } /* FlcDoOneFrame */
 
 void SDLWaitFrame(void)
 { 
-//#ifndef __NO_FLC
-static double oldTick=0.0;
-  Uint32 currentTick;
-  double waitTicks;
   double delay = flc.DelayOverride ? flc.DelayOverride : flc.HeaderSpeed;
-
-	if ( AreSame(oldTick, 0.0) ) oldTick = SDL_GetTicks();
-
-	currentTick=SDL_GetTicks(); 
-	waitTicks=(oldTick+=(delay))-currentTick;
-
-
-	do {
-		waitTicks = (oldTick + delay - SDL_GetTicks());
-
-		if(waitTicks > 0.0) {
-			//SDL_Delay((int)Round(waitTicks)); // biased rounding? mehhh?
-			SDL_Delay(1);
-		}
-	} while (waitTicks > 0.0); 
-//#endif
+  _waitForTick = SDL_GetTicks() + delay;
 } /* SDLWaitFrame */
 
 void FlcInitFirstFrame()
@@ -479,6 +461,9 @@ void FlcInitFirstFrame()
   FlcReadFile(flc.FrameSize);
 } /* FlcInitFirstFrame */
 
+SDL_Event loop_event;
+SDL_Rect loop_dstRect;
+
 int FlcInit(const char *filename)
 { flc.pMembuf=NULL;
   flc.membufSize=0;
@@ -488,45 +473,67 @@ int FlcInit(const char *filename)
     //exit(1);
 	return -1;
   }
+
   if (flc.realscreen->getSurface()->getSurface()->format->BitsPerPixel == 8)
   {
 	  flc.mainscreen = flc.realscreen->getSurface()->getSurface();
   } else
   {
-	  flc.mainscreen = SDL_AllocSurface(SDL_SWSURFACE, flc.screen_w, flc.screen_h, 8, 0, 0, 0, 0);
+	  throw 0;
+	  /*flc.mainscreen = ep_SDL_AllocSurface(SDL_SWSURFACE, flc.screen_w, flc.screen_h, 8, 0, 0, 0, 0);*/
   }
+
+  flc.quit=false;
+
+
+
+//#ifndef __NO_FLC
+  FlcInitFirstFrame();
+#ifdef _WIN32
+  flc.offset = flc.dy * flc.mainscreen->pitch + flc.mainscreen->format->BytesPerPixel * flc.dx;
+#else
+  loop_dstRect.x = (Sint16)flc.dx;
+  loop_dstRect.y = (Sint16)flc.dy;
+  loop_dstRect.w = (Uint16)flc.screen_w;
+  loop_dstRect.h = (Uint16)flc.screen_h;
+  flc.offset = 0;
+#endif
+
   return 0;
   //SDLInit(filename);
 } /* FlcInit */
 
 void FlcDeInit()
 { 
-	if (flc.mainscreen != flc.realscreen->getSurface()->getSurface()) SDL_FreeSurface(flc.mainscreen);
+	if (flc.mainscreen != flc.realscreen->getSurface()->getSurface()) ep_SDL_FreeSurface(flc.mainscreen);
 	fclose(flc.file);
 	free(flc.pMembuf);
 } /* FlcDeInit */
 
-void FlcMain(void (*frameCallBack)())
-{ flc.quit=false;
-  SDL_Event event;
-  
-  FlcInitFirstFrame();
-  flc.offset = flc.dy * flc.mainscreen->pitch + flc.mainscreen->format->BytesPerPixel * flc.dx;
-  while(!flc.quit) {
-	if (frameCallBack) (*frameCallBack)();
+bool FlcStep()
+{
+  if (flc.quit) {
+	 return false;
+  }
+
+  if (_waitForTick > SDL_GetTicks()) {
+	  return true;
+  }
+
+  {
+	if (flc.frameCallBack) (*flc.frameCallBack)();
     flc.FrameCount++;
     if(FlcCheckFrame()) {
       if (flc.FrameCount<=flc.HeaderFrames) {
         Log(LOG_ERROR) << "Frame failure -- corrupt file?";
-	return;
+		return false;
       } else {
         if(flc.loop)
           FlcInitFirstFrame();
         else {
-          SDL_Delay(1000);
           flc.quit=true;
         }
-        continue;
+        return true;
       }
     }
 
@@ -535,50 +542,29 @@ void FlcMain(void (*frameCallBack)())
 	if(flc.FrameCheck!=SDL_SwapLE16(0x0f100)) {
       FlcDoOneFrame();
       SDLWaitFrame();
-      /* TODO: Track which rectangles have really changed */
-      //SDL_UpdateRect(flc.mainscreen, 0, 0, 0, 0);
-      if (flc.mainscreen != flc.realscreen->getSurface()->getSurface())
-        SDL_BlitSurface(flc.mainscreen, 0, flc.realscreen->getSurface()->getSurface(), 0);
       flc.realscreen->flip();
     }
 
 	bool finalFrame = !flc.loop && (flc.FrameCount == flc.HeaderFrames);
-	Uint32 pauseStart = 0;
-	if (finalFrame) pauseStart = SDL_GetTicks();
 
-	do 
-	{
-		while(SDL_PollEvent(&event)) {
-		  switch(event.type) {
-			case SDL_MOUSEBUTTONDOWN:
-			case SDL_KEYDOWN:
-			  return;
-			break;
-			case SDL_VIDEORESIZE:
-				if (Options::allowResize)
-				{
-					Options::newDisplayWidth = Options::displayWidth = std::max(Screen::ORIGINAL_WIDTH, event.resize.w);
-					Options::newDisplayHeight = Options::displayHeight = std::max(Screen::ORIGINAL_HEIGHT, event.resize.h);
-					if (flc.mainscreen != flc.realscreen->getSurface()->getSurface())
-					{
-						flc.realscreen->resetDisplay();
-					}
-					else
-					{
-						flc.realscreen->resetDisplay();
-						flc.mainscreen = flc.realscreen->getSurface()->getSurface();
-					}
-				}
-				break;
-			case SDL_QUIT:
-			  exit(0);
-			default:
-			break;
-		  }
-		}
-		if (finalFrame) SDL_Delay(50);
-	} while (!flc.quit && finalFrame && SDL_GetTicks() - pauseStart < 10000); // 10 sec pause but we're actually just fading out and going to main menu when the music ends
-	if (finalFrame) flc.quit = true;
+	while(SDL_PollEvent(&loop_event)) {
+	  switch(loop_event.type) {
+		case SDL_MOUSEBUTTONDOWN:
+		case SDL_KEYDOWN:
+		  return false;
+		break;
+		case SDL_QUIT:
+		  exit(0);
+		default:
+		break;
+	  }
+	}
+
+	if (finalFrame) {
+		flc.quit = true;
+	}
+
+	return true;
   }
 //#endif
 } /* FlcMain */
@@ -586,7 +572,7 @@ void FlcMain(void (*frameCallBack)())
 
 #if 0
 void FlxplayHelp()
-{ printf("FLX player (%s) with SDL output (jasper@il.fontys.nl)\n", version);
+{ printf("FLX player (%s) with SDL output (jasper@il.fontys.nl)\n", flc_version);
   printf("View readme file for more information\n\n");
   printf("flxplay [-l] [filename]\n");
   exit(1);

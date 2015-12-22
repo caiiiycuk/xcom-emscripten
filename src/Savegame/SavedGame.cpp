@@ -50,6 +50,7 @@
 #include "AlienStrategy.h"
 #include "AlienMission.h"
 #include "../Ruleset/RuleRegion.h"
+#include <epicport/api.h>
 
 namespace OpenXcom
 {
@@ -546,6 +547,8 @@ void SavedGame::save(const std::string &filename) const
 	out << node;
 	sav << out.c_str();
 	sav.close();
+
+	Epicport_PushSave(s.c_str());
 }
 
 /**

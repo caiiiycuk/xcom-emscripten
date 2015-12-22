@@ -21,13 +21,14 @@
 #include "ShaderDraw.h"
 #include <vector>
 #include <fstream>
-#include <SDL_gfxPrimitives.h>
-#include <SDL_image.h>
 #include <SDL_endian.h>
 #include "Palette.h"
 #include "Exception.h"
 #include "ShaderMove.h"
 #include <stdlib.h>
+
+#include "Surface_ep.h"
+
 #ifdef _WIN32
 #include <malloc.h>
 #endif
@@ -44,16 +45,13 @@ namespace OpenXcom
 {
 
 
-namespace
-{
-
 /**
  * Helper function counting pitch in bytes with 16byte padding
  * @param bpp bytes per pixel
  * @param width number of pixel in row
  * @return pitch in bytes
  */
-inline int GetPitch(int bpp, int width)
+int GetPitch(int bpp, int width)
 {
 	return ((bpp/8) * width + 15) & ~0xF;
 }
@@ -65,7 +63,7 @@ inline int GetPitch(int bpp, int width)
  * @param height number of rows
  * @return pointer to memory
  */
-inline void* NewAligned(int bpp, int width, int height)
+void* NewAligned(int bpp, int width, int height)
 {
 	const int pitch = GetPitch(bpp, width);
 	const int total = pitch * height;
@@ -120,8 +118,6 @@ inline void DeleteAligned(void* buffer)
 	}
 }
 
-} //namespace
-
 /**
  * Sets up a blank 8bpp surface with the specified size and position,
  * with pure black as the transparent color.
@@ -137,14 +133,15 @@ inline void DeleteAligned(void* buffer)
 Surface::Surface(int width, int height, int x, int y, int bpp) : _x(x), _y(y), _visible(true), _hidden(false), _redraw(false), _alignedBuffer(0)
 {
 	_alignedBuffer = NewAligned(bpp, width, height);
-	_surface = SDL_CreateRGBSurfaceFrom(_alignedBuffer, width, height, bpp, GetPitch(bpp, width), 0, 0, 0, 0);
+	_surface = ep_SDL_CreateRGBSurfaceFrom(_alignedBuffer, width, height, bpp, GetPitch(bpp, width), 0, 0, 0, 0);
 
 	if (_surface == 0)
 	{
 		throw Exception(SDL_GetError());
 	}
 
-	SDL_SetColorKey(_surface, SDL_SRCCOLORKEY, 0);
+	//ep_CreateRGBSurfaceFrom already created with 
+	//SDL_SetColorKey(_surface, SDL_SRCCOLORKEY, 0);
 
 	_crop.w = 0;
 	_crop.h = 0;
@@ -170,14 +167,16 @@ Surface::Surface(const Surface& other)
 		int height = other.getHeight();
 		int pitch = GetPitch(bpp, width);
 		_alignedBuffer = NewAligned(bpp, width, height);
-		_surface = SDL_CreateRGBSurfaceFrom(_alignedBuffer, width, height, bpp, pitch, 0, 0, 0, 0);
-		SDL_SetColorKey(_surface, SDL_SRCCOLORKEY, 0);
-		//cant call `setPalette` because its virtual function and it dont work correctly in constructor
-		SDL_SetColors(_surface, other.getPalette(), 0, 255);
+		_surface = ep_SDL_CreateRGBSurfaceFrom(_alignedBuffer, width, height, bpp, pitch, 0, 0, 0, 0);
+		//SDL_SetColorKey(_surface, SDL_SRCCOLORKEY, 0);
+		//cant call `SetPalette` because its vitual function and it dont work correctly in constructor
+		//additionally it use original colors, not temporarily ones.
+		ep_SDL_SetColors(_surface, other._originalColors ? other._originalColors : other.getPalette(), 0, 255);
 		memcpy(_alignedBuffer, other._alignedBuffer, height*pitch);
 	}
 	else
 	{
+		assert(false);
 		_surface = SDL_ConvertSurface(other._surface, other._surface->format, other._surface->flags);
 		_alignedBuffer = 0;
 	}
@@ -207,7 +206,7 @@ Surface::Surface(const Surface& other)
 Surface::~Surface()
 {
 	DeleteAligned(_alignedBuffer);
-	SDL_FreeSurface(_surface);
+	ep_SDL_FreeSurface(_surface);
 }
 
 /**
@@ -249,22 +248,30 @@ void Surface::loadScr(const std::string &filename)
  */
 void Surface::loadImage(const std::string &filename)
 {
+	//LBM also PNG
+	if (filename.rfind(".png") == std::string::npos &&
+			filename.rfind(".PNG") == std::string::npos &&
+			filename.rfind(".LBM") == std::string::npos) {
+		Log(LOG_WARNING) << "Skipping image (unknown format): " << filename;
+		return;
+	}
+
 	// Destroy current surface (will be replaced)
 	DeleteAligned(_alignedBuffer);
-	SDL_FreeSurface(_surface);
+	ep_SDL_FreeSurface(_surface);
 	_alignedBuffer = 0;
 	_surface = 0;
 
 	// SDL only takes UTF-8 filenames
 	// so here's an ugly hack to match this ugly reasoning
-	std::string utf8 = Language::wstrToUtf8(Language::fsToWstr(filename));
+	std::wstring wstr = Language::cpToWstr(filename);
+	std::string utf8 = Language::wstrToUtf8(wstr);
 
 	// Load file
-	_surface = IMG_Load(utf8.c_str());
+	_surface = ep_IMG_Load_PNG(utf8.c_str());
 	if (!_surface)
 	{
-		std::string err = filename + ":" + IMG_GetError();
-		throw Exception(err);
+		throw Exception("Unable to load image " + filename);
 	}
 }
 
@@ -388,7 +395,7 @@ void Surface::loadBdy(const std::string &filename)
 void Surface::clear()
 {
 	if (_surface->flags & SDL_SWSURFACE) memset(_surface->pixels, 0, _surface->h*_surface->pitch);
-	else SDL_FillRect(_surface, &_clear, 0);
+	else ep_SDL_FillRect(_surface, &_clear, 0);
 }
 
 /**
@@ -517,7 +524,7 @@ void Surface::blit(Surface *surface)
 		}
 		target.x = getX();
 		target.y = getY();
-		SDL_BlitSurface(_surface, cropper, surface->getSurface(), &target);
+		ep_SDL_BlitSurface(_surface, cropper, surface->getSurface(), &target);
 	}
 }
 
@@ -535,7 +542,7 @@ void Surface::copy(Surface *surface)
 	from.y = getY() - surface->getY();
 	from.w = getWidth();
 	from.h = getHeight();
-	SDL_BlitSurface(surface->getSurface(), &from, _surface, 0);
+	ep_SDL_BlitSurface(surface->getSurface(), &from, _surface, 0);
 }
 
 /**
@@ -545,7 +552,7 @@ void Surface::copy(Surface *surface)
  */
 void Surface::drawRect(SDL_Rect *rect, Uint8 color)
 {
-	SDL_FillRect(_surface, rect, color);
+	ep_SDL_FillRect(_surface, rect, color);
 }
 
 /**
@@ -576,7 +583,7 @@ void Surface::drawRect(Sint16 x, Sint16 y, Sint16 w, Sint16 h, Uint8 color)
  */
 void Surface::drawLine(Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint8 color)
 {
-	lineColor(_surface, x1, y1, x2, y2, Palette::getRGBA(getPalette(), color));
+	ep_lineColor(_surface, x1, y1, x2, y2, color);
 }
 
 /**
@@ -588,7 +595,7 @@ void Surface::drawLine(Sint16 x1, Sint16 y1, Sint16 x2, Sint16 y2, Uint8 color)
  */
 void Surface::drawCircle(Sint16 x, Sint16 y, Sint16 r, Uint8 color)
 {
-	filledCircleColor(_surface, x, y, r, Palette::getRGBA(getPalette(), color));
+	ep_filledCircleColor(_surface, x, y, r, color);
 }
 
 /**
@@ -600,7 +607,9 @@ void Surface::drawCircle(Sint16 x, Sint16 y, Sint16 r, Uint8 color)
  */
 void Surface::drawPolygon(Sint16 *x, Sint16 *y, int n, Uint8 color)
 {
-	filledPolygonColor(_surface, x, y, n, Palette::getRGBA(getPalette(), color));
+	assert(false);
+	//FIXME: implement this not cirtical (not used at all)
+	//filledPolygonColor(_surface, x, y, n, Palette::getRGBA(getPalette(), color));
 }
 
 /**
@@ -614,7 +623,7 @@ void Surface::drawPolygon(Sint16 *x, Sint16 *y, int n, Uint8 color)
  */
 void Surface::drawTexturedPolygon(Sint16 *x, Sint16 *y, int n, Surface *texture, int dx, int dy)
 {
-	texturedPolygon(_surface, x, y, n, texture->getSurface(), dx, dy);
+	ep_texturedPolygon(_surface, x, y, n, texture->getSurface(), dx, dy);
 }
 
 /**
@@ -626,7 +635,9 @@ void Surface::drawTexturedPolygon(Sint16 *x, Sint16 *y, int n, Surface *texture,
  */
 void Surface::drawString(Sint16 x, Sint16 y, const char *s, Uint8 color)
 {
-	stringColor(_surface, x, y, s, Palette::getRGBA(getPalette(), color));
+	// FIXME: implement this but it is not critical
+	// because drawString used only for render "Loading..."
+	// stringColor(_surface, x, y, s, Palette::getRGBA(getPalette(), color));
 }
 
 /**
@@ -696,7 +707,7 @@ SDL_Rect *Surface::getCrop()
 void Surface::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
 {
 	if (_surface->format->BitsPerPixel == 8)
-		SDL_SetColors(_surface, colors, firstcolor, ncolors);
+	  ep_SDL_SetColors(_surface, colors, firstcolor, ncolors);
 }
 
 /**
@@ -719,7 +730,6 @@ void Surface::setHidden(bool hidden)
  */
 void Surface::lock()
 {
-	SDL_LockSurface(_surface);
 }
 
 /**
@@ -729,7 +739,6 @@ void Surface::lock()
  */
 void Surface::unlock()
 {
-	SDL_UnlockSurface(_surface);
 }
 
 /**

@@ -40,10 +40,18 @@
 #include "CrossPlatform.h"
 #include "../Menu/TestState.h"
 
+#if EMSCRIPTEN
+#include <emscripten.h>
+#endif
+
+#include <epicport/api.h>
+
 namespace OpenXcom
 {
 
 const double Game::VOLUME_GRADIENT = 10.0;
+
+static Game *_instance = 0;
 
 /**
  * Starts up SDL with all the subsystems and SDL_mixer for audio processing,
@@ -52,6 +60,8 @@ const double Game::VOLUME_GRADIENT = 10.0;
  */
 Game::Game(const std::string &title) : _screen(0), _cursor(0), _lang(0), _states(), _deleted(), _res(0), _save(0), _rules(0), _quit(false), _init(false), _mouseActive(true), _timeUntilNextFrame(0)
 {
+	_instance = this;
+
 	Options::reload = false;
 	Options::mute = false;
 
@@ -73,7 +83,6 @@ Game::Game(const std::string &title) : _screen(0), _cursor(0), _lang(0), _states
 	{
 		initAudio();
 	}
-
 	// trap the mouse inside the window
 	SDL_WM_GrabInput(Options::captureMouse);
 	
@@ -134,49 +143,40 @@ Game::~Game()
 	SDL_Quit();
 }
 
-/**
- * The state machine takes care of passing all the events from SDL to the
- * active state, running any code within and blitting all the states and
- * cursor to the screen. This is run indefinitely until the game quits.
- */
-void Game::run()
-{
-	enum ApplicationState { RUNNING = 0, SLOWED = 1, PAUSED = 2 } runningState = RUNNING;
-	static const ApplicationState kbFocusRun[4] = { RUNNING, RUNNING, SLOWED, PAUSED };
-	static const ApplicationState stateRun[4] = { SLOWED, PAUSED, PAUSED, PAUSED };
-	// this will avoid processing SDL's resize event on startup, workaround for the heap allocation error it causes.
-	bool startupEvent = Options::allowResize;
-	while (!_quit)
+bool screenUpdatesEnabled = true;
+
+void p_GameLoop() {
+	// Clean up states
+	while (!_instance->_deleted.empty())
 	{
-		// Clean up states
-		while (!_deleted.empty())
-		{
-			delete _deleted.back();
-			_deleted.pop_back();
-		}
+		delete _instance->_deleted.back();
+		_instance->_deleted.pop_back();
+	}
 
-		// Initialize active state
-		if (!_init)
-		{
-			_init = true;
-			_states.back()->init();
+	// Initialize active state
+	if (!_instance->_init)
+	{
+		_instance->_init = true;
+		_instance->_states.back()->init();
 
-			// Unpress buttons
-			_states.back()->resetAll();
+		// Unpress buttons
+		_instance->_states.back()->resetAll();
 
-			// Refresh mouse position
-			SDL_Event ev;
-			int x, y;
-			SDL_GetMouseState(&x, &y);
-			ev.type = SDL_MOUSEMOTION;
-			ev.motion.x = x;
-			ev.motion.y = y;
-			Action action = Action(&ev, _screen->getXScale(), _screen->getYScale(), _screen->getCursorTopBlackBand(), _screen->getCursorLeftBlackBand());
-			_states.back()->handle(&action);
-		}
+		// Refresh mouse position
+		SDL_Event ev;
+		int x, y;
+		SDL_GetMouseState(&x, &y);
+		ev.type = SDL_MOUSEMOTION;
+		ev.motion.x = x;
+		ev.motion.y = y;
+		Action action = Action(&ev, _instance->_screen->getXScale(), _instance->_screen->getYScale(), _instance->_screen->getCursorTopBlackBand(), _instance->_screen->getCursorLeftBlackBand());
+		_instance->_states.back()->handle(&action);
+	}
 
-		// Process events
-		while (SDL_PollEvent(&_event))
+	// Process events
+	while (screenUpdatesEnabled && SDL_PollEvent(&_instance->_event))
+	{
+		switch (_instance->_event.type)
 		{
 			if (CrossPlatform::isQuitShortcut(_event))
 				_event.type = SDL_QUIT;
@@ -257,8 +257,8 @@ void Game::run()
 							}
 						}
 					}
-					break;
-			}
+				}
+				break;
 		}
 		
 		// Process rendering
@@ -301,17 +301,48 @@ void Game::run()
 		}
 
 		// Save on CPU
-		switch (runningState)
-		{
-			case RUNNING: 
-				SDL_Delay(1); //Save CPU from going 100%
-				break;
-			case SLOWED: case PAUSED:
-				SDL_Delay(100); break; //More slowing down.
-		}
-	}
+#ifndef EMSCRIPTEN
+	switch (runningState)
+	{
+		case RUNNING:
+#ifdef __MORPHOS__
+			delaytime = waittime - (SDL_GetTicks() - framestarttime);
+			if(delaytime > 0)
+				SDL_Delay((Uint32)delaytime);
+			framestarttime = SDL_GetTicks();
+#else
+			SDL_Delay(1);
+#endif
 
-	Options::save();
+			break; //Save CPU from going 100%
+		case SLOWED: case PAUSED:
+			SDL_Delay(100); break; //More slowing down.
+	}
+#endif //EMSCRIPTEN
+}
+
+/**
+ * The state machine takes care of passing all the events from SDL to the
+ * active state, running any code within and blitting all the states and
+ * cursor to the screen. This is run indefinitely until the game quits.
+ */
+void Game::run()
+{
+	enum ApplicationState { RUNNING = 0, SLOWED = 1, PAUSED = 2 } runningState = RUNNING;
+	static const ApplicationState kbFocusRun[4] = { RUNNING, RUNNING, SLOWED, PAUSED };
+	static const ApplicationState stateRun[4] = { SLOWED, PAUSED, PAUSED, PAUSED };
+	// this will avoid processing SDL's resize event on startup, workaround for the heap allocation error it causes.
+	bool startupEvent = Options::allowResize;
+
+#ifdef EMSCRIPTEN
+	EM_ASM("SDL.defaults.width = 960; SDL.defaults.height = 600;");
+	EM_ASM("SDL.defaults.copyOnLock = false; SDL.defaults.discardOnLock = true; SDL.defaults.opaqueFrontBuffer = false;");
+	emscripten_set_main_loop(p_GameLoop, 0, false);
+#else
+	while (!_quit) {
+		p_GameLoop();
+	}
+#endif
 }
 
 /**
@@ -348,6 +379,7 @@ void Game::setVolume(int sound, int music, int ui)
 		{
 			music = volumeExponent(music) * (double)SDL_MIX_MAXVOLUME;
 			Mix_VolumeMusic(music);
+			Epicport_VolumeMusic(music);
 		}
 		if (ui >= 0)
 		{
@@ -444,33 +476,10 @@ Language *Game::getLanguage() const
 */
 void Game::loadLanguage(const std::string &filename)
 {
-	std::ostringstream ss;
+	std::stringstream ss;
 	ss << "Language/" << filename << ".yml";
 
-	ExtraStrings *strings = 0;
-	std::map<std::string, ExtraStrings *> extraStrings = _rules->getExtraStrings();
-	if (!extraStrings.empty())
-	{
-		if (extraStrings.find(filename) != extraStrings.end())
-		{
-			strings = extraStrings[filename];
-		}
-		// Fallback
-		else if (extraStrings.find("en-US") != extraStrings.end())
-		{
-			strings = extraStrings["en-US"];
-		}
-		else if (extraStrings.find("en-GB") != extraStrings.end())
-		{
-			strings = extraStrings["en-GB"];
-		}
-		else
-		{
-			strings = extraStrings.begin()->second;
-		}
-	}
-
-	_lang->load(CrossPlatform::getDataFile(ss.str()), strings);
+	_lang->load(CrossPlatform::getDataFile(ss.str()), _rules->getExtraStrings()[filename]);
 
 	Options::language = filename;
 }

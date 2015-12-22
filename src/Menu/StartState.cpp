@@ -42,6 +42,7 @@
 #include "ErrorMessageState.h"
 #include <SDL_mixer.h>
 #include <SDL_thread.h>
+#include <epicport/api.h>
 
 namespace OpenXcom
 {
@@ -151,6 +152,9 @@ void StartState::init()
 /**
  * If the loading fails, it shows an error, otherwise moves on to the game.
  */
+
+extern bool screenUpdatesEnabled;
+
 void StartState::think()
 {
 	State::think();
@@ -203,6 +207,53 @@ void StartState::think()
 		_game->getCursor()->setVisible(true);
 		_game->getFpsCounter()->setVisible(Options::fpsCounter);
 		break;
+
+	case PLAYING_INTRO: {
+		if (!Flc::FlcStep()) {
+		  _load = INTRO_DONE;
+		}
+	} break;
+
+	case INTRO_DONE: {
+		screenUpdatesEnabled = true;
+		Flc::FlcDeInit();
+		delete audioSequence;
+
+
+#ifndef __NO_MUSIC
+		// fade out!
+		Mix_HaltMusic();
+		Epicport_HaltMusic();
+#endif
+
+		SDL_Color pal[256];
+		SDL_Color pal2[256];
+		memcpy(pal, _game->getScreen()->getPalette(), sizeof(SDL_Color) * 256);
+		for (int i = 20; i > 0; --i)
+		{
+			SDL_Event event;
+			if (SDL_PollEvent(&event) && event.type == SDL_KEYDOWN) break;
+			for (int color = 0; color < 256; ++color)
+			{
+				pal2[color].r = (((int)pal[color].r) * i) / 20;
+				pal2[color].g = (((int)pal[color].g) * i) / 20;
+				pal2[color].b = (((int)pal[color].b) * i) / 20;
+			}
+			_game->getScreen()->setPalette(pal2, 0, 256, true);
+			_game->getScreen()->flip();
+//					SDL_Delay(45);
+		}
+		_game->getScreen()->clear();
+		_game->getScreen()->flip();
+
+		_game->setVolume(Options::getInt("soundVolume"), Options::getInt("musicVolume"));
+
+#ifndef __NO_MUSIC
+		Mix_HaltChannel(-1);
+#endif
+		_load = LOADING_SUCCESSFUL;
+	} break;
+
 	default:
 		break;
 	}

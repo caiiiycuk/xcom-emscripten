@@ -71,6 +71,7 @@ struct Flc_t {
   int dx, dy;
   int offset;
   bool quit;
+  void (*frameCallBack)();
 };
 
 extern struct Flc_t flc;
@@ -78,7 +79,7 @@ extern struct Flc_t flc;
 /// Open FLC or FLI file, read header, prepare to play it
 int FlcInit(const char *filename);
 /// Play the loaded file; set flc.mainscreen first!
-void FlcMain(void (*frameCallBack)());
+bool FlcStep();
 /// Free memory, free love, etc.
 void FlcDeInit();
 

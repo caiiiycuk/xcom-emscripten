@@ -20,7 +20,6 @@
 #include <cmath>
 #include <sstream>
 #include <iomanip>
-#include <SDL_gfxPrimitives.h>
 #include "../lodepng.h"
 #include "Map.h"
 #include "Camera.h"

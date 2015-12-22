@@ -34,6 +34,7 @@
 #include "NewBattleState.h"
 #include "ListLoadState.h"
 #include "OptionsVideoState.h"
+#include <epicport/api.h>
 
 namespace OpenXcom
 {
@@ -137,7 +138,9 @@ void MainMenuState::btnNewBattleClick(Action *)
  */
 void MainMenuState::btnLoadClick(Action *)
 {
+	if (Epicport_CanLoad()) {
 	_game->pushState(new ListLoadState(_game, OPT_MENU));
+	}
 }
 
 /**

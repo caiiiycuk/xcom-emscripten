@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2014 OpenXcom Developers.
+ * Copyright 2010-2013 OpenXcom Developers.
  *
  * This file is part of OpenXcom.
  *
@@ -23,6 +23,7 @@
 #include "Language.h"
 #include "Adlib/adlplayer.h"
 #include "AdlibMusic.h"
+#include <epicport/api.h>
 
 namespace OpenXcom
 {
@@ -40,8 +41,10 @@ Music::Music() : _music(0)
 Music::~Music()
 {
 #ifndef __NO_MUSIC
+#ifndef EMSCRIPTEN
 	stop();
 	Mix_FreeMusic(_music);
+#endif
 #endif
 }
 
@@ -92,10 +95,17 @@ void Music::play(int loop) const
 	if (!Options::mute)
 	{
 		stop();
+#ifdef EMSCRIPTEN
+		Epicport_HaltMusic();
+		if (_filename != "") {
+			Epicport_PlayMusic(_filename.c_str(), loop);
+		}
+#else
 		if (_music != 0 && Mix_PlayMusic(_music, loop) == -1)
 		{
 			Log(LOG_WARNING) << Mix_GetError();
 		}
+#endif
 	}
 #endif
 }
@@ -111,6 +121,9 @@ void Music::stop()
 		func_mute();
 		Mix_HookMusic(NULL, NULL);
 		Mix_HaltMusic();
+#ifdef EMSCRIPTEN
+		Epicport_HaltMusic();
+#endif
 	}
 #endif
 }
@@ -120,6 +133,9 @@ void Music::stop()
  */
 void Music::pause()
 {
+#ifdef EMSCRIPTEN
+	return;
+#endif
 #ifndef __NO_MUSIC
 	if (!Options::mute)
 	{
@@ -135,6 +151,9 @@ void Music::pause()
  */
 void Music::resume()
 {
+#ifdef EMSCRIPTEN
+	return;
+#endif
 #ifndef __NO_MUSIC
 	if (!Options::mute)
 	{

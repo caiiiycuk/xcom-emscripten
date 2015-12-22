@@ -18,6 +18,7 @@
  */
 
 #include "Exception.h"
+#include "Logger.h"
 
 namespace OpenXcom
 {
@@ -28,6 +29,7 @@ namespace OpenXcom
  */
 Exception::Exception(const std::string &msg) throw(): _msg(msg)
 {
+	Log(LOG_FATAL) << msg;
 }
 
 Exception::~Exception() throw()

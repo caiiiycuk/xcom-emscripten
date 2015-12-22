@@ -25,6 +25,8 @@
 #include "Engine/Options.h"
 #include "Menu/StartState.h"
 
+#define _DEBUG = 1
+
 /** @mainpage
  * @author OpenXcom Developers
  *

@@ -31,6 +31,7 @@
 #include "Zoom.h"
 #include "Timer.h"
 #include <SDL.h>
+#include <assert.h>
 
 namespace OpenXcom
 {
@@ -183,14 +184,50 @@ void Screen::handle(Action *action)
  */
 void Screen::flip()
 {
-	if (getWidth() != _baseWidth || getHeight() != _baseHeight || isOpenGLEnabled())
-	{
-		Zoom::flipWithZoom(_surface->getSurface(), _screen, _topBlackBand, _bottomBlackBand, _leftBlackBand, _rightBlackBand, &glOutput);
+//	if (getWidth() != BASE_WIDTH || getHeight() != BASE_HEIGHT || isOpenGLEnabled())
+//	{
+//		Zoom::flipWithZoom(_surface->getSurface(), _screen, _topBlackBand, _bottomBlackBand, _leftBlackBand, _rightBlackBand, &glOutput);
+//	}
+//	else
+//	{
+//		SDL_BlitSurface(_surface->getSurface(), 0, _screen, 0);
+//	}
+
+	assert(getWidth() % BASE_WIDTH == 0);
+	int scaleFactor = getWidth() / BASE_WIDTH;
+
+	Uint8 *srcrow = (Uint8*)_surface->getSurface()->pixels;
+	Uint8 *dstrow = (Uint8*)_screen->pixels;
+
+	for (int y = BASE_HEIGHT; y; --y) {
+		Uint8 *srcpixel = srcrow;
+		Uint8 *dstpixel = dstrow;
+
+		for (int x = BASE_WIDTH; x; --x) {
+			memset(dstpixel, *srcpixel, scaleFactor);
+			dstpixel += scaleFactor;
+			srcpixel += 1;
+		}
+
+		dstrow += _screen->pitch * scaleFactor;
+		srcrow += _surface->getSurface()->pitch;
 	}
-	else
-	{
-		SDL_BlitSurface(_surface->getSurface(), 0, _screen, 0);
+
+	if (scaleFactor > 1) {
+		srcrow = (Uint8*)_screen->pixels;
+		dstrow = srcrow;
+		for (int y = BASE_HEIGHT; y; --y) {
+			for (int scale = 0; scale < scaleFactor; ++scale) {
+				if (scale) {
+					memcpy(dstrow, srcrow, BASE_WIDTH * scaleFactor);
+				}
+
+				dstrow += _screen->pitch;
+			}
+			srcrow += _screen->pitch * scaleFactor;
+		}
 	}
+
 
 	// perform any requested palette update
 	if (_pushPalette && _numColors && _screen->format->BitsPerPixel == 8)
@@ -209,6 +246,10 @@ void Screen::flip()
 	{
 		throw Exception(SDL_GetError());
 	}
+#ifdef EMSCRIPTEN
+	SDL_LockSurface(_screen);
+	SDL_UnlockSurface(_screen);
+#endif
 }
 
 /**
@@ -320,7 +361,8 @@ void Screen::resetDisplay(bool resetVideo)
 		_surface = new Surface(_baseWidth, _baseHeight, 0, 0, Screen::isHQXEnabled() ? 32 : 8); // only HQX needs 32bpp for this surface; the OpenGL class has its own 32bpp buffer
 		if (_surface->getSurface()->format->BitsPerPixel == 8) _surface->setPalette(deferredPalette);
 	}
-	SDL_SetColorKey(_surface->getSurface(), 0, 0); // turn off color key! 
+	//FIXME
+	//SDL_SetColorKey(_surface->getSurface(), 0, 0); // turn off color key!
 
 	if (resetVideo || _screen->format->BitsPerPixel != _bpp)
 	{

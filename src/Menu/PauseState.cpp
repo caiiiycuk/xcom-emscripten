@@ -31,6 +31,7 @@
 #include "OptionsVideoState.h"
 #include "OptionsGeoscapeState.h"
 #include "OptionsBattlescapeState.h"
+#include <epicport/api.h>
 
 namespace OpenXcom
 {
@@ -157,7 +158,9 @@ void PauseState::btnLoadClick(Action *)
  */
 void PauseState::btnSaveClick(Action *)
 {
-	_game->pushState(new ListSaveState(_game, _origin));
+	if (Epicport_CanSave()) {
+	  _game->pushState(new ListSaveState(_game, _origin));
+	}
 }
 
 /**
